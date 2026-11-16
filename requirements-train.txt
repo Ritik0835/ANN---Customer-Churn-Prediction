@@ -1,0 +1,6 @@
+# Training, notebook, and optional PyTorch-parity dependencies.
+-r requirements.txt
+torch>=2.0
+matplotlib>=3.7
+seaborn>=0.13
+jupyter>=1.0

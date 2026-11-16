@@ -1,0 +1,4 @@
+# Test dependencies.  The PyTorch parity test is skipped automatically if
+# torch is not installed; install requirements-train.txt to run it.
+-r requirements.txt
+pytest>=8.0
