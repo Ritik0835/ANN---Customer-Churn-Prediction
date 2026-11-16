@@ -1,0 +1,21 @@
+{
+  "threshold": 0.3,
+  "test_samples": 1407,
+  "positive_test_samples": 374,
+  "accuracy": 0.7619047619047619,
+  "precision": 0.5377176015473888,
+  "recall": 0.7433155080213903,
+  "f1": 0.6240179573512907,
+  "roc_auc": 0.8343164864291224,
+  "average_precision": 0.6245086630103618,
+  "confusion_matrix": [
+    [
+      794,
+      239
+    ],
+    [
+      96,
+      278
+    ]
+  ]
+}
