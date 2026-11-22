@@ -20,16 +20,14 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
-from sklearn.model_selection import train_test_split
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.data import load_clean_dataset, split_train_test  # noqa: E402
 from src.predict import ChurnPredictor, DEFAULT_MODEL_DIR, WEIGHT_KEYS  # noqa: E402
 
 DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "raw" / "Telco-Customer-Churn.csv"
-RANDOM_STATE = 42
 
 
 def build_torch_model(input_size: int):
@@ -50,13 +48,6 @@ def build_torch_model(input_size: int):
             return self.network(inputs)
 
     return CustomerChurnANN(input_size)
-
-
-def load_clean_dataset(data_path: Path) -> tuple[pd.DataFrame, pd.Series]:
-    frame = pd.read_csv(data_path)
-    frame["TotalCharges"] = pd.to_numeric(frame["TotalCharges"], errors="coerce")
-    frame = frame.dropna().drop(columns=["customerID"]).reset_index(drop=True)
-    return frame.drop(columns=["Churn"]), frame["Churn"].map({"No": 0, "Yes": 1})
 
 
 def main() -> None:
@@ -100,13 +91,7 @@ def main() -> None:
     model.eval()
 
     features, target = load_clean_dataset(args.data)
-    _, x_test, _, y_test = train_test_split(
-        features,
-        target,
-        test_size=0.2,
-        random_state=RANDOM_STATE,
-        stratify=target,
-    )
+    _, x_test, _, _ = split_train_test(features, target)
 
     matrices = {
         "customer_1": predictor.preprocess(features.iloc[[0]]),

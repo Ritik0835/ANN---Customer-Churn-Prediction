@@ -1,6 +1,8 @@
 # Inference-only dependencies.
 # PyTorch is intentionally absent: src/predict.py is NumPy-only.
-numpy>=1.24
-pandas>=2.0
-scikit-learn>=1.6
-joblib>=1.3
+# Upper bounds reflect the API/private-class compatibility of preprocessor.pkl;
+# widen them only after regenerating the preprocessor and re-running the tests.
+numpy>=1.24,<3
+pandas>=2.0,<4
+scikit-learn>=1.6,<1.10
+joblib>=1.3,<2

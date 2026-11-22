@@ -11,13 +11,12 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import pytest
-from sklearn.model_selection import train_test_split
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.data import load_clean_dataset, split_train_test  # noqa: E402
 from src.predict import ChurnPredictor, WEIGHT_KEYS  # noqa: E402
 
 torch = pytest.importorskip("torch")
@@ -87,21 +86,8 @@ def test_numpy_and_pytorch_match_on_test_set(
     if not DATA_PATH.exists():
         pytest.skip("Raw dataset is not present under data/raw/.")
 
-    frame = pd.read_csv(DATA_PATH)
-    frame["TotalCharges"] = pd.to_numeric(
-        frame["TotalCharges"], errors="coerce"
-    )
-    frame = frame.dropna().drop(columns=["customerID"]).reset_index(drop=True)
-    features = frame.drop(columns=["Churn"])
-    target = frame["Churn"].map({"No": 0, "Yes": 1})
-
-    _, x_test, _, y_test = train_test_split(
-        features,
-        target,
-        test_size=0.2,
-        random_state=42,
-        stratify=target,
-    )
+    features, target = load_clean_dataset(DATA_PATH)
+    _, x_test, _, _ = split_train_test(features, target)
 
     model, _ = torch_model
     matrix = predictor.preprocess(x_test)
