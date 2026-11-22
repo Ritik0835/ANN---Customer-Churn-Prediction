@@ -19,7 +19,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -29,27 +28,13 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-from sklearn.model_selection import train_test_split
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.data import load_clean_dataset, split_train_test  # noqa: E402
 from src.predict import ChurnPredictor, DEFAULT_MODEL_DIR  # noqa: E402
 
 DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "raw" / "Telco-Customer-Churn.csv"
-RANDOM_STATE = 42
-
-
-def load_clean_dataset(data_path: Path) -> tuple[pd.DataFrame, pd.Series]:
-    """Apply the same cleaning steps as the training notebook."""
-
-    frame = pd.read_csv(data_path)
-    frame["TotalCharges"] = pd.to_numeric(frame["TotalCharges"], errors="coerce")
-    frame = frame.dropna().drop(columns=["customerID"]).reset_index(drop=True)
-
-    features = frame.drop(columns=["Churn"])
-    target = frame["Churn"].map({"No": 0, "Yes": 1})
-    return features, target
 
 
 def evaluate(data_path: Path, model_dir: Path) -> dict:
@@ -57,13 +42,7 @@ def evaluate(data_path: Path, model_dir: Path) -> dict:
 
     # This is the exact split from the notebook.  The test set is never used
     # for training or threshold selection.
-    _, x_test, _, y_test = train_test_split(
-        features,
-        target,
-        test_size=0.2,
-        random_state=RANDOM_STATE,
-        stratify=target,
-    )
+    _, x_test, _, y_test = split_train_test(features, target)
 
     predictor = ChurnPredictor(model_dir)
     probabilities = predictor.predict_proba(x_test)

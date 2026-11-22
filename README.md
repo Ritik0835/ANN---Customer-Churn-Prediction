@@ -41,6 +41,23 @@ threshold of 0.30.
 The same numbers are stored in [`docs/metrics.json`](docs/metrics.json) and can
 be reproduced with `python scripts/evaluate.py`.
 
+### Baseline comparison
+
+`python scripts/baseline.py` trains two simple models on the same 4,500-row
+fitting fold and evaluates the same 1,407-row test set. The baselines use their
+default 0.50 decision threshold; the ANN uses the validation-selected 0.30.
+
+| Model | Accuracy | Precision | Recall | F1 | ROC-AUC |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Majority class | 0.7342 | 0.0000 | 0.0000 | 0.0000 | 0.5000 |
+| Logistic regression | 0.7989 | 0.6350 | 0.5722 | 0.6020 | 0.8352 |
+| ANN (this project) | 0.7619 | 0.5377 | 0.7433 | 0.6240 | 0.8343 |
+
+The linear model and the ANN have nearly identical ranking quality (ROC-AUC),
+but the ANN's lower threshold trades precision for substantially higher recall.
+This comparison is a sanity check, not a claim that the ANN is universally
+better.
+
 ## Highlights
 
 - **PyTorch-free inference.** `src/predict.py` loads the exported NumPy weights
@@ -120,11 +137,13 @@ The fitted preprocessor is saved as `models/preprocessor.pkl`.
 ├── notebooks/
 │   └── ann-customer-churn-prediction.ipynb
 ├── scripts/
+│   ├── baseline.py          # majority-class and logistic-regression baselines
 │   ├── compare_backends.py  # optional NumPy vs. PyTorch parity check
 │   ├── evaluate.py          # reproduces the held-out test metrics
 │   └── export_weights.py    # .pth -> .npz maintenance utility
 ├── src/
 │   ├── __init__.py
+│   ├── data.py              # shared dataset loading and splitting
 │   └── predict.py           # NumPy-only inference
 ├── tests/
 │   ├── conftest.py
@@ -132,7 +151,8 @@ The fitted preprocessor is saved as `models/preprocessor.pkl`.
 │   └── test_torch_parity.py
 ├── requirements.txt         # inference dependencies (no PyTorch)
 ├── requirements-train.txt   # notebook/training dependencies
-└── requirements-dev.txt     # test dependencies
+├── requirements-dev.txt     # test dependencies
+└── .github/workflows/ci.yml # pytest on push and pull request
 ```
 
 ## Installation
@@ -154,7 +174,10 @@ pip install -r requirements.txt
 ```
 
 This installs NumPy, pandas, scikit-learn, and joblib. It deliberately does
-**not** install PyTorch.
+**not** install PyTorch. Version upper bounds are intentionally conservative
+because `preprocessor.pkl` depends on scikit-learn internals; the suite was
+verified here with NumPy 2.5.5, pandas 3.1.1, scikit-learn 1.9.1, and joblib
+1.6.0.
 
 ### Notebook and training
 
@@ -210,7 +233,12 @@ print(result)
 
 `predict_churn` accepts a dictionary, a pandas `DataFrame`, or a sequence of
 dictionaries. Use `ChurnPredictor.predict_proba(...)` when you only need
-probabilities.
+probabilities. By default, categorical values unseen during preprocessing
+training produce a warning and are encoded as all zeros; pass
+`strict_categories=True` to `ChurnPredictor` or `get_predictor` to raise a
+`ValueError` instead. The predictor cache is keyed by artifact modification
+times and sizes, so replacing model files in a long-running process does not
+serve stale predictions.
 
 ### Command line
 
@@ -237,6 +265,9 @@ python scripts/evaluate.py
 # Optional: compare NumPy inference with the original PyTorch checkpoint
 python scripts/compare_backends.py
 
+# Optional: compare the ANN with simple baselines
+python scripts/baseline.py
+
 # Run the test suite
 pytest -q
 ```
@@ -261,6 +292,12 @@ The notebook also contains a verification section that evaluates the committed
 artifacts through the NumPy predictor. Running the notebook's training cells
 retrains the model and rewrites the files in `models/`; the metrics above
 describe the currently committed artifacts.
+
+The notebook now splits the training portion into fitting and validation folds
+**before** fitting the preprocessor, so validation rows no longer influence
+scaler statistics or one-hot categories. The committed artifacts were produced
+before this correction and are intentionally left unchanged; a fresh notebook
+run will produce a new, internally consistent artifact set.
 
 ## NumPy vs. PyTorch parity
 
@@ -314,20 +351,27 @@ The current test suite covers:
 - preprocessing output shape and finite values
 - probability ranges and threshold behavior
 - dictionary, DataFrame, and batch inputs
-- missing, blank, and non-numeric input errors
+- missing, blank, non-numeric, and unseen-category input handling
 - a check that importing `src.predict` does not import PyTorch
 - optional PyTorch parity tests
+- centralized data cleaning/splitting and strict row/label validation
+- predictor-cache reuse and invalidation when artifacts change
+- an integration check that `scripts/evaluate.py` reproduces `docs/metrics.json`
 
-Verified results:
+Verified results in this workspace:
 
-- With PyTorch installed: **20 passed**
-- Without PyTorch: **17 passed, 1 skipped** (the parity module is skipped)
+- With PyTorch installed: **28 passed**
+- Without PyTorch: **25 passed, 1 skipped** (the parity module is skipped)
+
+CI runs the suite on every push and pull request via
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ## Limitations
 
 - The dataset is small and comes from a single historical snapshot.
-- Metrics come from one stratified split; no cross-validation or confidence
-  intervals are reported.
+- Metrics come from one stratified split; there is still no cross-validation or
+  confidence interval. `scripts/baseline.py` provides simple model comparisons,
+  but not variance estimates.
 - The network is small and uncalibrated. Probabilities should not be interpreted
   as precise real-world risk.
 - The threshold maximizes F1, which may not match the business cost of false
