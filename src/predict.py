@@ -91,10 +91,20 @@ class ChurnPredictor:
     model_dir:
         Directory containing ``ann_weights.npz``, ``preprocessor.pkl`` and
         ``metadata.json``.  Defaults to the repository's ``models/`` directory.
+    strict_categories:
+        When true, raise on categorical values unseen during preprocessing
+        training.  When false (default), warn and let the fitted
+        ``OneHotEncoder(handle_unknown="ignore")`` encode them as all zeros.
     """
 
-    def __init__(self, model_dir: str | Path = DEFAULT_MODEL_DIR):
+    def __init__(
+        self,
+        model_dir: str | Path = DEFAULT_MODEL_DIR,
+        *,
+        strict_categories: bool = False,
+    ):
         self.model_dir = Path(model_dir)
+        self.strict_categories = bool(strict_categories)
         self.metadata = self._load_metadata()
         self.preprocessor = self._load_preprocessor()
         self.weights = self._load_weights()
@@ -220,6 +230,45 @@ class ChurnPredictor:
                     "Check input_size in metadata.json and the exported weights."
                 )
 
+    def _validate_categories(self, frame: pd.DataFrame) -> None:
+        """Warn or raise on categorical values unseen during preprocessing fit."""
+
+        try:
+            encoder = self.preprocessor.named_transformers_["cat"]
+            fitted_categories = encoder.categories_
+        except (AttributeError, KeyError, TypeError):  # pragma: no cover
+            # Unrecognised artifact layout: let the encoder handle the values.
+            return
+
+        if len(fitted_categories) != len(self.categorical_columns):
+            return
+
+        unseen: dict[str, list[str]] = {}
+        for column, categories in zip(self.categorical_columns, fitted_categories):
+            known = {str(value) for value in categories}
+            unknown = {
+                str(value)
+                for value in frame[column].dropna().unique()
+                if str(value) not in known
+            }
+            if unknown:
+                unseen[column] = sorted(unknown)
+
+        if not unseen:
+            return
+
+        message = f"Unseen categorical values: {unseen}"
+        if self.strict_categories:
+            raise ValueError(
+                f"{message}. Set strict_categories=False to let the encoder "
+                "ignore them."
+            )
+        warnings.warn(
+            f"{message}; they will be encoded as all zeros.",
+            UserWarning,
+            stacklevel=3,
+        )
+
     # ------------------------------------------------------------------
     # Input validation and preprocessing
     # ------------------------------------------------------------------
@@ -281,6 +330,8 @@ class ChurnPredictor:
                 "Missing values in categorical columns: "
                 f"{bad_columns}. Clean the input before predicting."
             )
+
+        self._validate_categories(frame)
 
         transformed = self.preprocessor.transform(frame)
 
@@ -354,21 +405,46 @@ class ChurnPredictor:
         ]
 
 
-_PREDICTOR_CACHE: dict[Path, ChurnPredictor] = {}
+def _artifact_signature(model_dir: Path) -> tuple[tuple[str, int, int], ...]:
+    """Return mtimes and sizes of the artifacts that define a predictor."""
+
+    signature: list[tuple[str, int, int]] = []
+    for name in ("metadata.json", "preprocessor.pkl", "ann_weights.npz"):
+        try:
+            stat = (model_dir / name).stat()
+        except OSError:  # let ChurnPredictor raise the descriptive error
+            signature.append((name, -1, -1))
+        else:
+            signature.append((name, stat.st_mtime_ns, stat.st_size))
+    return tuple(signature)
 
 
-def get_predictor(model_dir: str | Path = DEFAULT_MODEL_DIR) -> ChurnPredictor:
-    """Return a cached predictor for ``model_dir``."""
+# Key includes the artifact signature so a long-running process never serves
+# predictions from a stale cache after the model files are replaced.
+_PREDICTOR_CACHE: dict[tuple[Path, tuple, bool], ChurnPredictor] = {}
+
+
+def get_predictor(
+    model_dir: str | Path = DEFAULT_MODEL_DIR,
+    *,
+    strict_categories: bool = False,
+) -> ChurnPredictor:
+    """Return a cached predictor, rebuilding it if the artifacts changed."""
 
     path = Path(model_dir).resolve()
-    if path not in _PREDICTOR_CACHE:
-        _PREDICTOR_CACHE[path] = ChurnPredictor(path)
-    return _PREDICTOR_CACHE[path]
+    key = (path, _artifact_signature(path), bool(strict_categories))
+    if key not in _PREDICTOR_CACHE:
+        _PREDICTOR_CACHE[key] = ChurnPredictor(
+            path, strict_categories=strict_categories
+        )
+    return _PREDICTOR_CACHE[key]
 
 
 def predict_churn(
     customer_data: Any,
     model_dir: str | Path = DEFAULT_MODEL_DIR,
+    *,
+    strict_categories: bool = False,
 ) -> list[dict[str, Any]]:
     """Convenience wrapper around :class:`ChurnPredictor`.
 
@@ -378,9 +454,13 @@ def predict_churn(
         A dictionary, a pandas DataFrame, or a sequence of dictionaries.
     model_dir:
         Directory containing the three saved artifacts.
+    strict_categories:
+        Forwarded to :func:`get_predictor`.
     """
 
-    return get_predictor(model_dir).predict_churn(customer_data)
+    return get_predictor(
+        model_dir, strict_categories=strict_categories
+    ).predict_churn(customer_data)
 
 
 if __name__ == "__main__":  # pragma: no cover - simple manual example

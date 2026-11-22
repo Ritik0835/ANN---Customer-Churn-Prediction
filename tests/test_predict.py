@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -13,7 +15,12 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.predict import ChurnPredictor, WEIGHT_KEYS  # noqa: E402
+from src.predict import (  # noqa: E402
+    DEFAULT_MODEL_DIR,
+    WEIGHT_KEYS,
+    ChurnPredictor,
+    get_predictor,
+)
 
 
 def test_artifacts_load(predictor: ChurnPredictor) -> None:
@@ -179,3 +186,46 @@ def test_inference_module_does_not_import_torch() -> None:
         text=True,
     )
     assert "torch-free import ok" in completed.stdout
+
+
+def test_unseen_category_warns_and_strict_mode_raises(
+    predictor: ChurnPredictor, sample_customer: dict
+) -> None:
+    invalid = dict(sample_customer)
+    invalid["Contract"] = "Unheard-of contract"
+
+    with pytest.warns(UserWarning, match="Unseen categorical values"):
+        predictor.preprocess(invalid)
+
+    strict = ChurnPredictor(predictor.model_dir, strict_categories=True)
+    with pytest.raises(ValueError, match="Unseen categorical values"):
+        strict.preprocess(invalid)
+
+
+def test_predictor_cache_reuses_unchanged_artifacts(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models"
+    model_dir.mkdir()
+    for name in ("metadata.json", "preprocessor.pkl", "ann_weights.npz"):
+        shutil.copy2(DEFAULT_MODEL_DIR / name, model_dir / name)
+
+    first = get_predictor(model_dir)
+    assert get_predictor(model_dir) is first
+
+
+def test_predictor_cache_invalidates_when_artifacts_change(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models"
+    model_dir.mkdir()
+    for name in ("metadata.json", "preprocessor.pkl", "ann_weights.npz"):
+        shutil.copy2(DEFAULT_MODEL_DIR / name, model_dir / name)
+
+    first = get_predictor(model_dir)
+    metadata = json.loads((model_dir / "metadata.json").read_text(encoding="utf-8"))
+    metadata["best_threshold"] = 0.42
+    metadata["cache_bust_note"] = "artifacts replaced by a test"
+    (model_dir / "metadata.json").write_text(
+        json.dumps(metadata, indent=2), encoding="utf-8"
+    )
+
+    second = get_predictor(model_dir)
+    assert second is not first
+    assert second.threshold == 0.42
